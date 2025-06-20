@@ -1,0 +1,216 @@
+class Container {
+constructor({
+cargoMassKg,
+heightCm,
+tareWeightKg,
+depthCm,
+maxPayloadKg,
+typeCode
+}) {
+this.heightCm = heightCm;
+this.tareWeightKg = tareWeightKg;
+this.depthCm = depthCm;
+this.maxPayloadKg = maxPayloadKg;
+this.serialNumber = SerialNumberGenerator.generate(typeCode);
+this.cargoMassKg = 0;
+if (cargoMassKg) {
+this.loadCargo(cargoMassKg);
+}
+}
+
+loadCargo(massKg) {
+if (massKg > this.maxPayloadKg) {
+throw new OverfillException(`Attempted to load ${massKg}kg exceeds max payload of ${this.maxPayloadKg}kg`);
+}
+this.cargoMassKg = massKg;
+}
+
+emptyCargo() {
+this.cargoMassKg = 0;
+}
+
+get weight() {
+return this.tareWeightKg + this.cargoMassKg;
+}
+
+info() {
+return {
+serialNumber: this.serialNumber,
+cargoMassKg: this.cargoMassKg,
+heightCm: this.heightCm,
+tareWeightKg: this.tareWeightKg,
+depthCm: this.depthCm,
+maxPayloadKg: this.maxPayloadKg,
+weight: this.weight,
+};
+}
+}
+
+class LiquidContainer extends IHazardNotifier(Container) {
+constructor({cargoMassKg, heightCm, tareWeightKg, depthCm, maxPayloadKg, isHazardous = false}) {
+super({cargoMassKg: 0, heightCm, tareWeightKg, depthCm, maxPayloadKg, typeCode: 'L'});
+this.isHazardous = isHazardous;
+if (cargoMassKg !== undefined) this.loadCargo(cargoMassKg);
+}
+
+loadCargo(massKg) {
+let allowedMax = this.isHazardous ? this.maxPayloadKg * 0.5 : this.maxPayloadKg * 0.9;
+if (massKg > allowedMax) {
+this.notifyHazard(`Dangerous operation: Attempt to load ${massKg}kg but allowed max is ${allowedMax}kg`);
+throw new OverfillException(`Exceeded allowed payload for liquid container: ${allowedMax}kg`);
+}
+super.loadCargo(massKg);
+}
+}
+
+class GasContainer extends IHazardNotifier(Container) {
+constructor({cargoMassKg, heightCm, tareWeightKg, depthCm, maxPayloadKg, pressureAtm}) {
+super({cargoMassKg: 0, heightCm, tareWeightKg, depthCm, maxPayloadKg, typeCode: 'G'});
+this.pressureAtm = pressureAtm;
+if (cargoMassKg !== undefined) this.loadCargo(cargoMassKg);
+}
+
+loadCargo(massKg) {
+if (massKg > this.maxPayloadKg) {
+this.notifyHazard(`Attempt to overload gas container with ${massKg}kg (max: ${this.maxPayloadKg}kg)`);
+throw new OverfillException(`Payload exceeds maximum for gas container.`);
+}
+super.loadCargo(massKg);
+}
+
+emptyCargo() {
+this.cargoMassKg = this.cargoMassKg * 0.05;
+}
+
+info() {
+return {...super.info(), pressureAtm: this.pressureAtm};
+}
+}
+
+class RefrigeratedContainer extends Container {
+static productTemperatureMap = {
+Bananas: 13.3,
+Chocolate: 18,
+Fish: 2,
+Meat: -15,
+'Ice-cream': -18,
+'Frozen pizza': -30,
+Cheese: 7.2,
+Sausages: 5,
+Butter: 20.5,
+Eggs: 19
+};
+
+constructor({cargoMassKg, heightCm, tareWeightKg, depthCm, maxPayloadKg, productType, temperatureC}) {
+super({cargoMassKg: 0, heightCm, tareWeightKg, depthCm, maxPayloadKg, typeCode: 'C'});
+this.productType = productType;
+this.temperatureC = temperatureC;
+
+if (!RefrigeratedContainer.productTemperatureMap[productType]) {
+throw new Error(`Unknown product type: ${productType}`);
+}
+if (temperatureC < RefrigeratedContainer.productTemperatureMap[productType]) {
+throw new Error(`Temperature too low for ${productType}: must be at least ${RefrigeratedContainer.productTemperatureMap[productType]}°C`);
+}
+
+if (cargoMassKg !== undefined) this.loadCargo(cargoMassKg);
+}
+
+loadCargo(massKg) {
+if (this.cargoMassKg > 0 && massKg > 0 && this.productType !== this.currentProductType) {
+throw new Error(`Refrigerated container can only store products of the same type.`);
+}
+super.loadCargo(massKg);
+this.currentProductType = this.productType;
+}
+
+info() {
+return {...super.info(), productType: this.productType, temperatureC: this.temperatureC};
+}
+}
+
+class ContainerShip {
+constructor({maxSpeedKnots, maxContainers, maxWeightTons}) {
+this.maxSpeedKnots = maxSpeedKnots;
+this.maxContainers = maxContainers;
+this.maxWeightKg = maxWeightTons * 1000; // convert tons to kg
+this.containers = [];
+}
+
+get currentWeightKg() {
+return this.containers.reduce((acc, c) => acc + c.weight, 0);
+}
+
+addContainer(container) {
+if (this.containers.length >= this.maxContainers) {
+throw new Error('Max container count reached.');
+}
+if (this.currentWeightKg + container.weight > this.maxWeightKg) {
+throw new Error('Max weight exceeded by adding this container.');
+}
+this.containers.push(container);
+}
+
+addContainers(containerList) {
+for (let c of containerList) {
+this.addContainer(c);
+}
+}
+
+removeContainer(serialNumber) {
+const idx = this.containers.findIndex(c => c.serialNumber === serialNumber);
+if (idx === -1) throw new Error('Container not found on ship.');
+return this.containers.splice(idx, 1)[0];
+}
+
+replaceContainer(serialNumber, newContainer) {
+const idx = this.containers.findIndex(c => c.serialNumber === serialNumber);
+if (idx === -1) throw new Error('Container to replace not found.');
+let weightWithoutOld = this.currentWeightKg - this.containers[idx].weight;
+if (weightWithoutOld + newContainer.weight > this.maxWeightKg) {
+throw new Error('Replacing would exceed max weight.');
+}
+this.containers[idx] = newContainer;
+}
+
+transferContainerTo(serialNumber, otherShip) {
+let container = this.removeContainer(serialNumber);
+try {
+otherShip.addContainer(container);
+} catch (e) {
+this.addContainer(container);
+throw e;
+}
+}
+
+info() {
+return {
+maxSpeedKnots: this.maxSpeedKnots,
+maxContainers: this.maxContainers,
+maxWeightTons: this.maxWeightKg / 1000,
+currentWeightKg: this.currentWeightKg,
+currentContainerCount: this.containers.length,
+containers: this.containers.map(c => c.info())
+};
+}
+}
+
+class OverfillException extends Error {
+constructor(message) {
+super(message);
+this.name = "OverfillException";
+}
+}
+
+const IHazardNotifier = Base => class extends Base {
+notifyHazard(message) {
+console.log(`Hazard Notification - Container ${this.serialNumber}: ${message}`);
+}
+};
+
+class SerialNumberGenerator {
+static counter = 1;
+static generate(typeCode) {
+return `KON-${typeCode}-${this.counter++}`;
+}
+}
